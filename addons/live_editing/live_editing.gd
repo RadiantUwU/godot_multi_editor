@@ -134,6 +134,9 @@ func _erase_object(peer:PacketPeerUDP, obj)->void:
 				for i in o.get_children():
 					_erase_object(peer,i)
 				o.queue_free()
+			elif o is Resource: pass
+			else:
+				get_tree().queue_delete(o)
 			instance_ids.erase(o)
 			instance_ids_reversed.erase(obj)
 	else:
@@ -211,6 +214,7 @@ func _init_networking()->void:
 	
 	networking.register_packet_handler(&"new_object",_new_object)
 	networking.register_packet_handler(&"load_object",_load_object)
+	networking.register_packet_handler(&"unload_object",_unload_object)
 	networking.register_packet_handler(&"load_scene",_load_scene)
 
 func _enter_tree():
@@ -442,6 +446,16 @@ func _load_object(peer: PacketPeerUDP, data: Dictionary)->void:
 		if i in properties:
 			if properties["type"] == TYPE_OBJECT:
 				obj.set(i,instance_ids_reversed.get(data[i],null))
+func _unload_object(peer: PacketPeerUDP, data: int)->void:
+	var obj:Object=instance_ids_reversed.get(data)
+	if obj == null: return
+	instance_ids.erase(obj)
+	instance_ids_reversed.erase(data)
+	if obj is Node:
+		obj.queue_free()
+	elif obj is Resource: pass
+	else:
+		obj.free()
 
 func _unpack_main_asset_file():
 	if trust_mode:
