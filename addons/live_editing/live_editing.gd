@@ -28,6 +28,7 @@ const CONNECTION_STATE_ESTABLISHED_UNTRUSTED:=3
 
 var instance_id_max:=0
 var instance_ids:={}
+var instance_ids_reversed:={}
 var scenes:={}
 
 var last_connected_ip:=""
@@ -44,8 +45,9 @@ var packets_paused:=0
 const pausable_packets:Array[StringName]=[
 	&"set_property",
 	&"new_object",
-	&"load_resource",
-	&"unload_scene"
+	&"load_object",
+	&"unload_scene",
+	&"load_scene"
 ]
 
 func _cache_packet(peer: PacketPeerUDP,data: PackedByteArray)->void:
@@ -70,7 +72,38 @@ func _process(delta):
 			networking.send_keep_alive()
 			keep_alive_counter -= 1.0
 
+static func _has_flag(i:int,f:int)->bool:
+	return i&f==f
+
 var conf:=ConfigFile.new()
+func _broadcast_object_properties(peer: PacketPeerUDP, obj: Object, oid: int)->void:
+	var obj_details:={"oid":oid}
+	for property in obj.get_property_list():
+		if _has_flag(property["usage"],PROPERTY_USAGE_STORAGE):
+			obj_details[property["name"]]=obj.get(property["name"])
+	networking.send_packet_type(peer,&"load_object",obj_details)
+func _broadcast_object(peer:PacketPeerUDP,obj: Object)->int:
+	var oid: int = instance_ids.get(obj,-1)
+	if oid != -1:
+		return oid
+	oid = instance_id_max
+	instance_id_max+=1
+	instance_ids[obj]=oid
+	instance_ids_reversed[obj]=oid
+	var obj_details:={}
+	if obj.get_script() != null and obj.get_script() != "":
+		var script = obj.get_script()
+		if script is Script:
+			if script.resource_path != "":
+				obj_details["class"]=script.resource_path
+		else:
+			obj_details["class"]=script
+	else:
+		obj_details["class"]=obj.get_class()
+	obj_details["oid"]=oid
+	networking.send_packet_type(peer,&"new_object",obj_details)
+	_broadcast_object_properties.call_deferred(peer,obj,oid)
+	return oid
 
 func _get_plugin_name():
 	return "Godot Co-Op"
@@ -124,8 +157,8 @@ func _init_networking()->void:
 	
 	networking.create_packet_type(&"load_scene",TYPE_DICTIONARY)
 	networking.create_packet_type(&"unload_scene",TYPE_DICTIONARY)
-	networking.create_packet_type(&"new_object",TYPE_STRING_NAME)
-	networking.create_packet_type(&"load_resource",TYPE_STRING_NAME)
+	networking.create_packet_type(&"new_object",TYPE_DICTIONARY)
+	networking.create_packet_type(&"load_object",TYPE_DICTIONARY)
 	networking.create_packet_type(&"set_property",TYPE_DICTIONARY)
 	
 	networking.register_packet_handler(&"initialize",_init_packet)
@@ -314,11 +347,17 @@ func _load_scene(peer: PacketPeerUDP, data: Dictionary)->void:
 		if !is_scene:
 			networking.disconnect_peer(peer,"Disconnected.",true)
 		connections[peer]["loaded_scenes"].append(path)
+		var scene:PackedScene=load(path)
+		if not scene:
+			push_error("Scene is NULL")
+			return
+		if not scene.can_instantiate():
+			push_error("assert(scene.can_instantiate()) failed")
+			return
 		var scene_data := {
 			"refs":1,
-			"root":load(path)
+			"root":scene.instantiate()
 		}
-		
 	else:
 		pass
 
