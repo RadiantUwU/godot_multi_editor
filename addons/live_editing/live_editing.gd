@@ -149,6 +149,19 @@ func _erase_object(peer:PacketPeerUDP, obj)->void:
 				obj.queue_free()
 			instance_ids.erase(obj)
 			instance_ids_reversed.erase(o)
+func _set_property(obj: Object, k: String, v)->void:
+	if obj == null: return
+	var oid = instance_ids_reversed.get(obj)
+	if oid == null: return
+	var type:=typeof(v)
+	if type == TYPE_OBJECT:
+		v = _broadcast_object(null,v)
+	networking.send_packet_type(null,&"set_property",{
+		"o":oid,
+		"k":k,
+		"v":v,
+		"t":type
+	})
 
 func _get_plugin_name():
 	return "Godot Co-Op"
@@ -216,6 +229,7 @@ func _init_networking()->void:
 	networking.register_packet_handler(&"load_object",_load_object)
 	networking.register_packet_handler(&"unload_object",_unload_object)
 	networking.register_packet_handler(&"load_scene",_load_scene)
+	networking.register_packet_handler(&"unload_scene",_unload_scene)
 
 func _enter_tree():
 	# Initialization of the plugin goes here.
@@ -456,6 +470,9 @@ func _unload_object(peer: PacketPeerUDP, data: int)->void:
 	elif obj is Resource: pass
 	else:
 		obj.free()
+func _unload_scene(peer: PacketPeerUDP, data: Dictionary)->void:
+	pass
+
 
 func _unpack_main_asset_file():
 	if trust_mode:
