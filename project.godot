@@ -16,4 +16,4 @@ config/icon="res://icon.svg"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/live_editing/plugin.cfg", "res://addons/script-ide/plugin.cfg", "res://addons/testing/plugin.cfg")
+enabled=PackedStringArray("res://addons/script-ide/plugin.cfg")
