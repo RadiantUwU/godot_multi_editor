@@ -94,6 +94,7 @@ func _broadcast_object(peer:PacketPeerUDP,obj: Object,force:=false)->int:
 	if obj == null:
 		return -1
 	var oid: int = instance_ids.get(obj,-2)
+	var exists := oid != -2
 	if oid != -2 && !force:
 		return oid
 	elif oid == -2:
@@ -111,10 +112,10 @@ func _broadcast_object(peer:PacketPeerUDP,obj: Object,force:=false)->int:
 		else:
 			obj_details["script"]=script
 	obj_details["oid"]=oid
-	networking.send_packet_type(peer,&"new_object",obj_details)
-	_broadcast_object_properties.call_deferred(peer,obj,oid)
+	networking.send_packet_type(peer if exists else null,&"new_object",obj_details)
+	_broadcast_object_properties.call_deferred(peer if exists else null,obj,oid)
 	if obj is Node:
-		_broadcast_object(peer,obj,force)
+		_broadcast_object(peer,obj.get_parent(),force)
 		for i in obj.get_children(true):
 			_broadcast_object(peer,i,force)
 	for prop in obj.get_property_list():
@@ -298,7 +299,8 @@ func _init_packet(peer: PacketPeerUDP, data: Dictionary)->void:
 			var fstream := FileAccess.open("res://addons/live_editing/coop_session.zip",FileAccess.READ)
 			if fstream:
 				networking.send_packet_type(peer,&"handshake_complete",{
-					"size":fstream.get_length()
+					"size":fstream.get_length(),
+					"instances_loaded":len(instance_ids)
 				})
 				for i in range(fstream.get_length() / 4096):
 					var a :=PackedByteArray()
@@ -312,6 +314,9 @@ func _init_packet(peer: PacketPeerUDP, data: Dictionary)->void:
 				a.encode_u32(0,2**32-1)
 				a.append_array(fstream.get_buffer(4096))
 				networking.send_packet_type(peer,&"load_main_assets",a)
+				for o in instance_ids.keys():
+					if is_instance_valid(o):
+						_broadcast_object(peer,o,true)
 	else:
 		var trusting:bool=data["trusted"]
 		networking.allow_decoding_objects = last_connected_ip in trusted_IPs and trusting
