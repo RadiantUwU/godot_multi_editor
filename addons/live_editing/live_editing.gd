@@ -119,7 +119,7 @@ func _init_networking()->void:
 	networking.create_packet_type(&"handshake_complete",TYPE_DICTIONARY)
 	networking.create_packet_type(&"load_files",TYPE_PACKED_BYTE_ARRAY)
 	networking.create_packet_type(&"set_property",TYPE_DICTIONARY)
-	networking.create_packet_type(&"load_scene_file",TYPE_DICTIONARY)
+	networking.create_packet_type(&"load_scene",TYPE_DICTIONARY)
 	networking.create_packet_type(&"unload_scene",TYPE_DICTIONARY)
 	networking.create_packet_type(&"load_main_assets",TYPE_PACKED_BYTE_ARRAY)
 	
@@ -272,7 +272,7 @@ func _handshake_complete(peer: PacketPeerUDP, data: Dictionary)->void:
 			networking.disconnect_network(true)
 func _recv_main_file(peer: PacketPeerUDP, data: PackedByteArray)->void:
 	if networking.is_server:
-		networking.disconnect_peer(peer,"Disconnected",true)
+		networking.disconnect_peer(peer,"Disconnected",true) # Not meant to receive under no circumstances
 		return
 	else:
 		var fstream := FileAccess.open("res://addons/live_editing/download_assets.zip",FileAccess.READ_WRITE)
@@ -346,14 +346,16 @@ func _client_joined(peer: PacketPeerUDP)->void:
 		})
 func _client_left(peer: PacketPeerUDP)->void:
 	if connections[peer]["state"] in [CONNECTION_STATE_AWAIT_INSTANCES_TRUSTED,CONNECTION_STATE_AWAIT_INSTANCES_UNTRUSTED]:
-		_resume_packets()
+		_resume_packets.call_deferred()
 	for i in connections[peer]["loaded_scenes"]:
-		var packet := PackedByteArray()
 		var data = {}
-			data = data.duplicate()
-			data["__packet__"]=packet_name
+		data["__packet__"]=&"unload_scene"
+		data["scene"]=i
+		if packets_paused:
+			_cache_packet(peer,var_to_bytes(data))
 		else:
-			data["data"]=data
+			networking._on_incoming_packet(peer,var_to_bytes(data))
+	connections.erase(peer) # Delete
 func _server_init()->void:
 	packets_paused = false
 	packet_buffer.clear()
