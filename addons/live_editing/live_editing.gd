@@ -472,7 +472,17 @@ func _unload_object(peer: PacketPeerUDP, data: int)->void:
 	else:
 		obj.free()
 func _unload_scene(peer: PacketPeerUDP, data: Dictionary)->void:
-	pass
+	if networking.is_server:
+		var path: String = data["path"]
+		if path in connections[peer]["loaded_scenes"]:
+			connections[peer]["loaded_scenes"].erase(path)
+			if path in scenes:
+				scenes[path]["refs"] -= 1
+				if scenes[path]["refs"] == 0:
+					_erase_object(null,scenes[path]["root"])
+					scenes.erase(path)
+	else:
+		pass
 func _on_set_property(peer: PacketPeerUDP, data: Dictionary)->void:
 	var obj:Object = instance_ids_reversed.get(data["o"],null)
 	if obj == null: return
