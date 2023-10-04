@@ -26,9 +26,12 @@ const CONNECTION_STATE_AWAIT_INSTANCES_UNTRUSTED:=5
 const CONNECTION_STATE_ESTABLISHED_TRUSTED:=2
 const CONNECTION_STATE_ESTABLISHED_UNTRUSTED:=3
 
-var instance_id_max:=0
-var instance_ids:={}
-var instance_ids_reversed:={}
+var instance_ids:={
+	null: -1
+}          # Object   -> ObjectID
+var instance_ids_reversed:={
+	-1: null
+}          # ObjectID -> Object
 var scenes:={}
 
 var last_connected_ip:=""
@@ -46,6 +49,7 @@ const pausable_packets:Array[StringName]=[
 	&"set_property",
 	&"new_object",
 	&"load_object",
+	&"unload_object",
 	&"unload_scene",
 	&"load_scene"
 ]
@@ -76,20 +80,24 @@ static func _has_flag(i:int,f:int)->bool:
 	return i&f==f
 
 var conf:=ConfigFile.new()
+var _broadcast_recursion:Array[Object]=[]
 func _broadcast_object_properties(peer: PacketPeerUDP, obj: Object, oid: int)->void:
 	var obj_details:={"oid":oid}
 	for property in obj.get_property_list():
 		if _has_flag(property["usage"],PROPERTY_USAGE_STORAGE):
 			obj_details[property["name"]]=obj.get(property["name"])
 	networking.send_packet_type(peer,&"load_object",obj_details)
-func _broadcast_object(peer:PacketPeerUDP,obj: Object)->int:
-	var oid: int = instance_ids.get(obj,-1)
-	if oid != -1:
+func _broadcast_object(peer:PacketPeerUDP,obj: Object,force:=false)->int:
+	if obj == null:
+		return -1
+	var oid: int = instance_ids.get(obj,-2)
+	if oid != -2 && !force:
 		return oid
-	oid = instance_id_max
-	instance_id_max+=1
-	instance_ids[obj]=oid
-	instance_ids_reversed[obj]=oid
+	elif oid == -2:
+		oid = randi()
+		instance_ids[obj]=oid
+		instance_ids_reversed[obj]=oid
+	_broadcast_recursion.append(obj)
 	var obj_details:={}
 	if obj.get_script() != null and obj.get_script() != "":
 		var script = obj.get_script()
@@ -103,7 +111,39 @@ func _broadcast_object(peer:PacketPeerUDP,obj: Object)->int:
 	obj_details["oid"]=oid
 	networking.send_packet_type(peer,&"new_object",obj_details)
 	_broadcast_object_properties.call_deferred(peer,obj,oid)
+	if obj is Node:
+		_broadcast_object(peer,obj,force)
+		for i in obj.get_children(true):
+			_broadcast_object(peer,i,force)
+	for prop in obj.get_property_list():
+		if _has_flag(prop["usage"],PROPERTY_USAGE_STORAGE):
+			var v:=obj.get(prop["name"])
+			if v is Object:
+				if v in _broadcast_recursion: continue
+				_broadcast_object(peer,v,force)
+	_broadcast_recursion.pop_back()
 	return oid
+func _erase_object(peer:PacketPeerUDP, obj)->void:
+	if typeof(obj) == TYPE_INT:
+		networking.send_packet_type(peer,&"unload_object",obj)
+		var o: Object = instance_ids_reversed.get(obj,null)
+		if is_instance_valid(o):
+			if o is Node:
+				for i in o.get_children():
+					_erase_object(peer,i)
+				o.queue_free()
+			instance_ids.erase(o)
+			instance_ids_reversed.erase(obj)
+	else:
+		var o: int = instance_ids.get(obj,-2)
+		if is_instance_valid(obj):
+			networking.send_packet_type(peer,&"unload_object",o)
+			if obj is Node:
+				for i in obj.get_children():
+					_erase_object(peer,i)
+				obj.queue_free()
+			instance_ids.erase(obj)
+			instance_ids_reversed.erase(o)
 
 func _get_plugin_name():
 	return "Godot Co-Op"
@@ -160,11 +200,13 @@ func _init_networking()->void:
 	networking.create_packet_type(&"new_object",TYPE_DICTIONARY)
 	networking.create_packet_type(&"load_object",TYPE_DICTIONARY)
 	networking.create_packet_type(&"set_property",TYPE_DICTIONARY)
+	networking.create_packet_type(&"unload_object",TYPE_INT)
 	
 	networking.register_packet_handler(&"initialize",_init_packet)
 	networking.register_packet_handler(&"request_password",_request_password)
 	networking.register_packet_handler(&"handshake_complete",_handshake_complete)
 	networking.register_packet_handler(&"load_main_assets",_recv_main_file)
+	networking.register_packet_handler(&"load_scene",_load_scene)
 
 func _enter_tree():
 	# Initialization of the plugin goes here.
@@ -358,9 +400,20 @@ func _load_scene(peer: PacketPeerUDP, data: Dictionary)->void:
 			"refs":1,
 			"root":scene.instantiate()
 		}
+		scenes[path]=scene_data
+		networking.send_packet_type(peer,&"load_scene",{"root":_broadcast_object(null,scene_data["root"])})
+	else:
+		var node:Node=instance_ids_reversed[data["root"]]
+		var scene_root:Node= get_editor_interface().get_edited_scene_root()
+		if scene_root == null:
+			push_error("assert(scene_root != null) failed")
+			return
+		scene_root.replace_by(node,false)
+func _new_object(peer: PacketPeerUDP, data: Dictionary)->void:
+	if networking.is_server:
+		pass
 	else:
 		pass
-
 
 func _unpack_main_asset_file():
 	if trust_mode:
@@ -435,7 +488,6 @@ func _server_init()->void:
 	packets_paused = false
 	packet_buffer.clear()
 	instance_ids.clear()
-	instance_id_max = 0
 	scenes.clear()
 	connections.clear()
 func _connected_to_server()->void:
