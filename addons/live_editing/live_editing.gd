@@ -85,7 +85,10 @@ func _broadcast_object_properties(peer: PacketPeerUDP, obj: Object, oid: int)->v
 	var obj_details:={"oid":oid}
 	for property in obj.get_property_list():
 		if _has_flag(property["usage"],PROPERTY_USAGE_STORAGE):
-			obj_details[property["name"]]=obj.get(property["name"])
+			var v = obj.get(property["name"])
+			if typeof(v) == TYPE_OBJECT:
+				v = instance_ids[v]
+			obj_details[property["name"]]=v
 	networking.send_packet_type(peer,&"load_object",obj_details)
 func _broadcast_object(peer:PacketPeerUDP,obj: Object,force:=false)->int:
 	if obj == null:
@@ -205,6 +208,9 @@ func _init_networking()->void:
 	networking.register_packet_handler(&"request_password",_request_password)
 	networking.register_packet_handler(&"handshake_complete",_handshake_complete)
 	networking.register_packet_handler(&"load_main_assets",_recv_main_file)
+	
+	networking.register_packet_handler(&"new_object",_new_object)
+	networking.register_packet_handler(&"load_object",_load_object)
 	networking.register_packet_handler(&"load_scene",_load_scene)
 
 func _enter_tree():
@@ -409,11 +415,33 @@ func _load_scene(peer: PacketPeerUDP, data: Dictionary)->void:
 			return
 		scene_root.replace_by(node,false)
 func _new_object(peer: PacketPeerUDP, data: Dictionary)->void:
-	var oid:=data["oid"]
+	var oid:int=data["oid"]
 	if instance_ids_reversed.get(oid) != null:
 		return
 	if ClassDB.can_instantiate(data["class"]):
-		pass
+		var o:Object= ClassDB.instantiate(data["class"])
+		instance_ids[o]=oid
+		instance_ids_reversed[oid]=o
+		var script:String=data.get("script","")
+		if script != "":
+			if !script.begins_with("res://"):
+				return
+			elif script.contains(".."):
+				return
+			o.set_script(script)
+		return
+func _load_object(peer: PacketPeerUDP, data: Dictionary)->void:
+	var obj:Object=instance_ids_reversed.get(data["oid"],null)
+	if obj == null: return
+	var prop_arr:=obj.get_property_list()
+	var properties:={}
+	for i in prop_arr:
+		properties[i["name"]]=i
+	for i in data.keys():
+		if i == "oid": continue
+		if i in properties:
+			if properties["type"] == TYPE_OBJECT:
+				obj.set(i,instance_ids_reversed.get(data[i],null))
 
 func _unpack_main_asset_file():
 	if trust_mode:
