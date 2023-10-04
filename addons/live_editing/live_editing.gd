@@ -230,6 +230,7 @@ func _init_networking()->void:
 	networking.register_packet_handler(&"unload_object",_unload_object)
 	networking.register_packet_handler(&"load_scene",_load_scene)
 	networking.register_packet_handler(&"unload_scene",_unload_scene)
+	networking.register_packet_handler(&"set_property",_on_set_property)
 
 func _enter_tree():
 	# Initialization of the plugin goes here.
@@ -472,6 +473,14 @@ func _unload_object(peer: PacketPeerUDP, data: int)->void:
 		obj.free()
 func _unload_scene(peer: PacketPeerUDP, data: Dictionary)->void:
 	pass
+func _on_set_property(peer: PacketPeerUDP, data: Dictionary)->void:
+	var obj:Object = instance_ids_reversed.get(data["o"],null)
+	if obj == null: return
+	var v = data["v"]
+	if data["t"] == TYPE_OBJECT:
+		v = instance_ids_reversed.get(data["v"],null)
+	obj.set(data["k"],v)
+
 
 
 func _unpack_main_asset_file():
