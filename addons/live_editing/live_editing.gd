@@ -99,15 +99,14 @@ func _broadcast_object(peer:PacketPeerUDP,obj: Object,force:=false)->int:
 		instance_ids_reversed[obj]=oid
 	_broadcast_recursion.append(obj)
 	var obj_details:={}
+	obj_details["class"]=obj.get_class()
 	if obj.get_script() != null and obj.get_script() != "":
 		var script = obj.get_script()
 		if script is Script:
 			if script.resource_path != "":
-				obj_details["class"]=script.resource_path
+				obj_details["script"]=script.resource_path
 		else:
-			obj_details["class"]=script
-	else:
-		obj_details["class"]=obj.get_class()
+			obj_details["script"]=script
 	obj_details["oid"]=oid
 	networking.send_packet_type(peer,&"new_object",obj_details)
 	_broadcast_object_properties.call_deferred(peer,obj,oid)
@@ -410,9 +409,10 @@ func _load_scene(peer: PacketPeerUDP, data: Dictionary)->void:
 			return
 		scene_root.replace_by(node,false)
 func _new_object(peer: PacketPeerUDP, data: Dictionary)->void:
-	if networking.is_server:
-		pass
-	else:
+	var oid:=data["oid"]
+	if instance_ids_reversed.get(oid) != null:
+		return
+	if ClassDB.can_instantiate(data["class"]):
 		pass
 
 func _unpack_main_asset_file():
