@@ -43,6 +43,8 @@ var packet_buffer:Array[Dictionary]=[]
 var packets_paused:=0
 const pausable_packets:Array[StringName]=[
 	&"set_property",
+	&"new_object",
+	&"load_resource",
 	&"unload_scene"
 ]
 
@@ -118,10 +120,13 @@ func _init_networking()->void:
 	networking.create_packet_type(&"request_password",TYPE_PACKED_BYTE_ARRAY)
 	networking.create_packet_type(&"handshake_complete",TYPE_DICTIONARY)
 	networking.create_packet_type(&"load_files",TYPE_PACKED_BYTE_ARRAY)
-	networking.create_packet_type(&"set_property",TYPE_DICTIONARY)
+	networking.create_packet_type(&"load_main_assets",TYPE_PACKED_BYTE_ARRAY)
+	
 	networking.create_packet_type(&"load_scene",TYPE_DICTIONARY)
 	networking.create_packet_type(&"unload_scene",TYPE_DICTIONARY)
-	networking.create_packet_type(&"load_main_assets",TYPE_PACKED_BYTE_ARRAY)
+	networking.create_packet_type(&"new_object",TYPE_STRING_NAME)
+	networking.create_packet_type(&"load_resource",TYPE_STRING_NAME)
+	networking.create_packet_type(&"set_property",TYPE_DICTIONARY)
 	
 	networking.register_packet_handler(&"initialize",_init_packet)
 	networking.register_packet_handler(&"request_password",_request_password)
@@ -286,6 +291,37 @@ func _recv_main_file(peer: PacketPeerUDP, data: PackedByteArray)->void:
 			_unpack_main_asset_file.call_deferred()
 		else:
 			loading_bar.get_node("VBoxContainer/ProgressBar/Label").text = "%s/%s"%[String.humanize_size(asset_current_size),String.humanize_size(asset_size)]
+func _load_scene(peer: PacketPeerUDP, data: Dictionary)->void:
+	if networking.is_server:
+		var path: String = data["path"]
+		if path in scenes:
+			scenes[path]["refs"]+=1
+			connections[peer]["loaded_scenes"].append(path)
+			return
+		if path == "": networking.disconnect_peer(peer,"Disconnected.",true)
+		if connections[peer]["state"] == CONNECTION_STATE_ESTABLISHED_UNTRUSTED || !server_trust_mode:
+			if path.begins_with("res://addons"): 
+				networking.disconnect_peer(peer,"Disconnected.",true)
+				return
+			if !path.begins_with("res://"):
+				networking.disconnect_peer(peer,"Disconnected.",true)
+				return
+		var is_scene:=false
+		for ext in ResourceLoader.get_recognized_extensions_for_type("PackedScene"):
+			if path.ends_with(ext):
+				is_scene = true
+				break
+		if !is_scene:
+			networking.disconnect_peer(peer,"Disconnected.",true)
+		connections[peer]["loaded_scenes"].append(path)
+		var scene_data := {
+			"refs":1,
+			"root":load(path)
+		}
+		
+	else:
+		pass
+
 
 func _unpack_main_asset_file():
 	if trust_mode:
